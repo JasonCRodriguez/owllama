@@ -2,12 +2,15 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/ioutil"
+	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -23,7 +26,7 @@ func printUsage() {
 	fmt.Println("  version")
 	fmt.Println("  help")
 	fmt.Println("  chat <model>")
-	fmt.Println("  chat-history <list|view> [key]")
+	fmt.Println("  history <list|view> [key]")
 }
 
 func main() {
@@ -89,7 +92,7 @@ func main() {
 		}
 		model := os.Args[2]
 		historyFile := "owllama_chat_history.json"
-		fmt.Println("Starting chat session. Type /exit to quit.")
+		fmt.Println("Starting chat session. Type /exit to quit. Type /clear to reset context.")
 		reader := bufio.NewReader(os.Stdin)
 		// Generate a random session key for this chat
 		sessionKeyBytes := make([]byte, 8)
@@ -109,6 +112,9 @@ func main() {
 			Messages:   []ChatMessage{},
 		}
 
+		// Chat context for this session
+		var messages []map[string]string // for HTTP API: role/content
+
 		for {
 			fmt.Print("You: ")
 			prompt, err := reader.ReadString('\n')
@@ -125,6 +131,17 @@ func main() {
 				fmt.Println("Exiting chat session.")
 				break
 			}
+			if prompt == "/clear" {
+				messages = nil
+				fmt.Println("Context cleared.")
+				continue
+			}
+			if prompt == "" {
+				continue
+			}
+
+			// Add user message to context
+			messages = append(messages, map[string]string{"role": "user", "content": prompt})
 
 			// Show a spinner while processing
 			spinnerDone := make(chan struct{})
@@ -144,30 +161,45 @@ func main() {
 				}
 			}()
 
-			req := &api.GenerateRequest{
-				Model:  model,
-				Prompt: prompt,
-				Stream: nil,
+			// Prepare HTTP request to Ollama API
+			ollamaURL := "http://localhost:11434/api/chat"
+			bodyMap := map[string]interface{}{
+				"model":    model,
+				"messages": messages,
 			}
-			var responseText string
-			err = client.Generate(ctx, req, func(resp api.GenerateResponse) error {
-				responseText += resp.Response
-				return nil
-			})
+			bodyBytes, _ := json.Marshal(bodyMap)
+			req, _ := http.NewRequest("POST", ollamaURL, bytes.NewBuffer(bodyBytes))
+			req.Header.Set("Content-Type", "application/json")
+			resp, err := http.DefaultClient.Do(req)
 			close(spinnerDone)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error generating response: %v\n", err)
+				fmt.Fprintf(os.Stderr, "Error contacting Ollama API: %v\n", err)
 				continue
 			}
-
-			// Remove thinking text for printing, but keep it for history
-			printText := responseText
+			respBody, _ := ioutil.ReadAll(resp.Body)
+			resp.Body.Close()
+			if resp.StatusCode != 200 {
+				fmt.Fprintf(os.Stderr, "Ollama API error: %s\n", string(respBody))
+				continue
+			}
+			// Parse response
+			var apiResp struct {
+				Message struct {
+					Role    string `json:"role"`
+					Content string `json:"content"`
+				} `json:"message"`
+			}
+			if err := json.Unmarshal(respBody, &apiResp); err != nil {
+				fmt.Fprintf(os.Stderr, "Error parsing Ollama response: %v\n", err)
+				continue
+			}
+			printText := apiResp.Message.Content
 			if strings.Contains(model, "qwen3") {
 				for {
-					start := strings.Index(printText, "<|im_thoughts|>")
-					end := strings.Index(printText, "</|im_thoughts|>")
+					start := strings.Index(printText, "<think>")
+					end := strings.Index(printText, "</think>")
 					if start != -1 && end != -1 && end > start {
-						printText = printText[:start] + printText[end+16:]
+						printText = printText[:start] + printText[end+7:]
 					} else {
 						break
 					}
@@ -175,24 +207,36 @@ func main() {
 			}
 			fmt.Println("Ollama:", strings.TrimSpace(printText))
 
-			// Append messages to session
+			// Add model response to context
+			messages = append(messages, map[string]string{"role": "assistant", "content": apiResp.Message.Content})
+
+			// Append messages to session for history
 			session.Messages = append(session.Messages, ChatMessage{Role: "user", Content: prompt})
-			session.Messages = append(session.Messages, ChatMessage{Role: "ollama", Content: responseText})
+			session.Messages = append(session.Messages, ChatMessage{Role: "ollama", Content: apiResp.Message.Content})
 		}
-		// Save session to history
-		chatHistory.Sessions = append(chatHistory.Sessions, session)
-		f, ferr := os.OpenFile(historyFile, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
-		if ferr == nil {
-			enc := json.NewEncoder(f)
-			enc.SetIndent("", "  ")
-			enc.Encode(chatHistory)
-			f.Close()
-		} else {
-			fmt.Fprintf(os.Stderr, "Error writing to history file: %v\n", ferr)
+		// Save session to history only if user provided input
+		userInputFound := false
+		for _, msg := range session.Messages {
+			if msg.Role == "user" && strings.TrimSpace(msg.Content) != "" {
+				userInputFound = true
+				break
+			}
 		}
-	case "chat-history":
+		if userInputFound {
+			chatHistory.Sessions = append(chatHistory.Sessions, session)
+			f, ferr := os.OpenFile(historyFile, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+			if ferr == nil {
+				enc := json.NewEncoder(f)
+				enc.SetIndent("", "  ")
+				enc.Encode(chatHistory)
+				f.Close()
+			} else {
+				fmt.Fprintf(os.Stderr, "Error writing to history file: %v\n", ferr)
+			}
+		}
+	case "history":
 		if len(os.Args) < 3 {
-			fmt.Println("Usage: owllama chat-history <list|view> [key]")
+			fmt.Println("Usage: owllama history <list|view> [key]")
 			os.Exit(1)
 		}
 		subcmd := os.Args[2]
@@ -225,7 +269,7 @@ func main() {
 			}
 		case "view":
 			if len(os.Args) < 4 {
-				fmt.Println("Usage: owllama chat-history view <key>")
+				fmt.Println("Usage: owllama history view <key>")
 				os.Exit(1)
 			}
 			key := os.Args[3]
@@ -254,7 +298,7 @@ func main() {
 			}
 			fmt.Println("Session not found.")
 		default:
-			fmt.Println("Usage: owllama chat-history <list|view> [key]")
+			fmt.Println("Usage: owllama history <list|view> [key]")
 			os.Exit(1)
 		}
 		return
