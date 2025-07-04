@@ -1,0 +1,20 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "build owllama",
+      "type": "shell",
+      "command": "go build -o owllama .",
+      "group": "build",
+      "problemMatcher": ["$go"]
+    },
+    {
+      "label": "run owllama",
+      "type": "shell",
+      "command": "go run owllama.go",
+      "args": [],
+      "group": "test",
+      "problemMatcher": ["$go"]
+    }
+  ]
+}

@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"os"
 	"strings"
@@ -176,24 +175,35 @@ func main() {
 				fmt.Fprintf(os.Stderr, "Error contacting Ollama API: %v\n", err)
 				continue
 			}
-			respBody, _ := ioutil.ReadAll(resp.Body)
+			respBody, _ := io.ReadAll(resp.Body)
 			resp.Body.Close()
 			if resp.StatusCode != 200 {
 				fmt.Fprintf(os.Stderr, "Ollama API error: %s\n", string(respBody))
 				continue
 			}
 			// Parse response
-			var apiResp struct {
-				Message struct {
-					Role    string `json:"role"`
-					Content string `json:"content"`
-				} `json:"message"`
+			var responseText string
+			respScanner := bufio.NewScanner(strings.NewReader(string(respBody)))
+			for respScanner.Scan() {
+				line := respScanner.Text()
+				var apiResp struct {
+					Message struct {
+						Role    string `json:"role"`
+						Content string `json:"content"`
+					} `json:"message"`
+					Done bool `json:"done"`
+				}
+				if err := json.Unmarshal([]byte(line), &apiResp); err != nil {
+					continue // skip malformed lines
+				}
+				if apiResp.Message.Role == "assistant" {
+					responseText += apiResp.Message.Content
+				}
+				if apiResp.Done {
+					break
+				}
 			}
-			if err := json.Unmarshal(respBody, &apiResp); err != nil {
-				fmt.Fprintf(os.Stderr, "Error parsing Ollama response: %v\n", err)
-				continue
-			}
-			printText := apiResp.Message.Content
+			printText := responseText
 			if strings.Contains(model, "qwen3") {
 				for {
 					start := strings.Index(printText, "<think>")
@@ -208,11 +218,11 @@ func main() {
 			fmt.Println("Ollama:", strings.TrimSpace(printText))
 
 			// Add model response to context
-			messages = append(messages, map[string]string{"role": "assistant", "content": apiResp.Message.Content})
+			messages = append(messages, map[string]string{"role": "assistant", "content": responseText})
 
 			// Append messages to session for history
 			session.Messages = append(session.Messages, ChatMessage{Role: "user", Content: prompt})
-			session.Messages = append(session.Messages, ChatMessage{Role: "ollama", Content: apiResp.Message.Content})
+			session.Messages = append(session.Messages, ChatMessage{Role: "ollama", Content: responseText})
 		}
 		// Save session to history only if user provided input
 		userInputFound := false
