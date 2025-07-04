@@ -389,8 +389,3 @@ func urlQueryEscapeWiki(s string) string {
 	s = strings.ReplaceAll(s, "\r", "")
 	return s
 }
-
-// urlQueryEscape safely escapes a string for use in a URL query.
-func urlQueryEscape(s string) string {
-	return strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(s, " ", "+"), "\n", ""), "\r", "")
-}
