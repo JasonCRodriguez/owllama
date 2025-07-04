@@ -85,11 +85,13 @@ func main() {
 	case "help":
 		printUsage()
 	case "chat":
+		var model string
 		if len(os.Args) < 3 {
-			fmt.Println("Usage: owllama chat <model>")
-			os.Exit(1)
+			model = "gemma3"
+			fmt.Println("No model specified, using default: gemma3")
+		} else {
+			model = os.Args[2]
 		}
-		model := os.Args[2]
 		historyFile := "owllama_chat_history.json"
 		fmt.Println("Starting chat session. Type /exit to quit. Type /clear to reset context.")
 		reader := bufio.NewReader(os.Stdin)
@@ -126,6 +128,26 @@ func main() {
 				continue
 			}
 			prompt = strings.TrimSpace(prompt)
+
+			// Internet search function: /search <query>
+			if strings.HasPrefix(prompt, "/search ") {
+				query := strings.TrimSpace(strings.TrimPrefix(prompt, "/search "))
+				if query == "" {
+					fmt.Println("Please provide a search query.")
+					continue
+				}
+				fmt.Println("Searching the internet for:", query)
+				result, err := searchInternet(query)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Search error: %v\n", err)
+					continue
+				}
+				fmt.Println("Search result:", result)
+				// Optionally, add the result to the chat context as if from the assistant
+				messages = append(messages, map[string]string{"role": "assistant", "content": result})
+				continue
+			}
+
 			if prompt == "/exit" {
 				fmt.Println("Exiting chat session.")
 				break
@@ -330,4 +352,45 @@ type ChatSession struct {
 // ChatHistory is a collection of chat sessions
 type ChatHistory struct {
 	Sessions []ChatSession `json:"sessions"`
+}
+
+// searchInternet performs a simple web search using Wikipedia's API and returns a summary of the top result.
+func searchInternet(query string) (string, error) {
+	// Use Wikipedia's summary API
+	apiURL := "https://en.wikipedia.org/api/rest_v1/page/summary/" + urlQueryEscapeWiki(query)
+	resp, err := http.Get(apiURL)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == 404 {
+		return "No relevant information found.", nil
+	}
+	if resp.StatusCode != 200 {
+		return "", fmt.Errorf("wikipedia API error: %s", resp.Status)
+	}
+	var data struct {
+		Extract string `json:"extract"`
+		Title   string `json:"title"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+		return "", err
+	}
+	if data.Extract != "" {
+		return fmt.Sprintf("%s: %s", data.Title, data.Extract), nil
+	}
+	return "No relevant information found.", nil
+}
+
+// urlQueryEscapeWiki escapes a string for use in a Wikipedia API URL.
+func urlQueryEscapeWiki(s string) string {
+	s = strings.ReplaceAll(s, " ", "_")
+	s = strings.ReplaceAll(s, "\n", "")
+	s = strings.ReplaceAll(s, "\r", "")
+	return s
+}
+
+// urlQueryEscape safely escapes a string for use in a URL query.
+func urlQueryEscape(s string) string {
+	return strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(s, " ", "+"), "\n", ""), "\r", "")
 }
