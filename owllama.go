@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	markdown "github.com/MichaelMure/go-term-markdown"
 	"github.com/ollama/ollama/api"
 )
 
@@ -142,7 +143,10 @@ func handleChat(_ context.Context, _ *api.Client) {
 		fmt.Fprintf(os.Stderr, "Error contacting Ollama API: %v\n", err)
 	} else {
 		printText := filterQwenThink(model, responseText)
-		fmt.Println("Ollama:", strings.TrimSpace(printText))
+		fmt.Println("\033[1;36mUser:\033[0m")
+		printMarkdown(fullPrompt)
+		fmt.Println("\033[1;32mOllama:\033[0m")
+		printMarkdown(printText)
 		messages = append(messages, map[string]string{"role": "assistant", "content": responseText})
 		session.Messages = append(session.Messages, ChatMessage{Role: "user", Content: fullPrompt})
 		session.Messages = append(session.Messages, ChatMessage{Role: "ollama", Content: responseText})
@@ -150,7 +154,7 @@ func handleChat(_ context.Context, _ *api.Client) {
 	fmt.Println("\nType /exit to quit. Type /clear to reset context.")
 
 	for {
-		fmt.Print("You: ")
+		fmt.Print("\033[1;36mYou>>>> \033[0m")
 		prompt, err := reader.ReadString('\n')
 		if err != nil {
 			if err == io.EOF {
@@ -199,7 +203,10 @@ func handleChat(_ context.Context, _ *api.Client) {
 			continue
 		}
 		printText := filterQwenThink(model, responseText)
-		fmt.Println("Ollama:", strings.TrimSpace(printText))
+		fmt.Println("\033[1;36mYou:\033[0m")
+		printMarkdown(prompt)
+		fmt.Println("\033[1;32mOllama:\033[0m")
+		printMarkdown(printText)
 		messages = append(messages, map[string]string{"role": "assistant", "content": responseText})
 		session.Messages = append(session.Messages, ChatMessage{Role: "user", Content: prompt})
 		session.Messages = append(session.Messages, ChatMessage{Role: "ollama", Content: responseText})
@@ -215,6 +222,11 @@ func handleChat(_ context.Context, _ *api.Client) {
 		chatHistory.Sessions = append(chatHistory.Sessions, session)
 		saveChatHistory(chatHistory)
 	}
+}
+
+func printMarkdown(md string) {
+	out := markdown.Render(md, 80, 6)
+	os.Stdout.Write(out)
 }
 
 func handleHistory(_ context.Context, _ *api.Client) {
@@ -294,7 +306,7 @@ func buildPrompt(reader *bufio.Reader) (string, error) {
 	confirm, _ := reader.ReadString('\n')
 	confirm = strings.TrimSpace(confirm)
 	if strings.ToLower(confirm) == "edit" {
-		fmt.Println("Restarting prompt setup...\n")
+		fmt.Println("Restarting prompt setup...")
 		return buildPrompt(reader)
 	}
 	return fullPrompt, nil
@@ -368,10 +380,6 @@ func filterQwenThink(model, text string) string {
 	if !strings.Contains(model, "qwen3") {
 		return text
 	}
-	for {
-		start := strings.Index(text, "<think>")
-		end := strings.Index(text, "</think>")
-		if start != -1 && end != -1 && end > start {
 			text = text[:start] + text[end+7:]
 		} else {
 			break
@@ -381,7 +389,7 @@ func filterQwenThink(model, text string) string {
 }
 
 func generateSessionKey() string {
-	b := make([]byte, 8)
+	b := make([]byte, 4)
 	_, _ = rand.Read(b)
 	return hex.EncodeToString(b)
 }
