@@ -166,6 +166,38 @@ func handleChat(_ context.Context, _ *api.Client) {
 		}
 		prompt = strings.TrimSpace(prompt)
 
+		if prompt == "/edit" || prompt == "/vi" {
+			editor := os.Getenv("EDITOR")
+			if editor == "" {
+				editor = "vi"
+			}
+			tmpfile, err := os.CreateTemp("", "owllama_edit_*.md")
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Could not create temp file: %v\n", err)
+				continue
+			}
+			tmpfile.Close()
+			cmd := exec.Command(editor, tmpfile.Name())
+			cmd.Stdin = os.Stdin
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
+			if err := cmd.Run(); err != nil {
+				fmt.Fprintf(os.Stderr, "Editor error: %v\n", err)
+				os.Remove(tmpfile.Name())
+				continue
+			}
+			content, err := os.ReadFile(tmpfile.Name())
+			os.Remove(tmpfile.Name())
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Could not read temp file: %v\n", err)
+				continue
+			}
+			prompt = strings.TrimSpace(string(content))
+			if prompt == "" {
+				continue
+			}
+		}
+
 		if strings.HasPrefix(prompt, "/search ") {
 			query := strings.TrimSpace(strings.TrimPrefix(prompt, "/search "))
 			if query == "" {
@@ -380,6 +412,10 @@ func filterQwenThink(model, text string) string {
 	if !strings.Contains(model, "qwen3") {
 		return text
 	}
+	for {
+		start := strings.Index(text, "<think>")
+		end := strings.Index(text, "</think>")
+		if start != -1 && end != -1 && end > start {
 			text = text[:start] + text[end+7:]
 		} else {
 			break
