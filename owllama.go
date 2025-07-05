@@ -13,7 +13,6 @@ import (
 	"os"
 	"os/exec"
 	"strings"
-	"time"
 
 	markdown "github.com/MichaelMure/go-term-markdown"
 	"github.com/ollama/ollama/api"
@@ -135,10 +134,7 @@ func handleChat(_ context.Context, _ *api.Client) {
 	var messages []map[string]string
 	messages = append(messages, map[string]string{"role": "user", "content": fullPrompt})
 
-	// Show spinner while processing first prompt
-	spinnerDone := startSpinner()
 	responseText, err := ollamaChatAPI(model, messages)
-	close(spinnerDone)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error contacting Ollama API: %v\n", err)
 	} else {
@@ -227,9 +223,7 @@ func handleChat(_ context.Context, _ *api.Client) {
 			continue
 		}
 		messages = append(messages, map[string]string{"role": "user", "content": prompt})
-		spinnerDone := startSpinner()
 		responseText, err := ollamaChatAPI(model, messages)
-		close(spinnerDone)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error contacting Ollama API: %v\n", err)
 			continue
@@ -342,26 +336,6 @@ func buildPrompt(reader *bufio.Reader) (string, error) {
 		return buildPrompt(reader)
 	}
 	return fullPrompt, nil
-}
-
-func startSpinner() chan struct{} {
-	done := make(chan struct{})
-	go func() {
-		spinnerChars := []rune{'|', '/', '-', '\\'}
-		idx := 0
-		for {
-			select {
-			case <-done:
-				fmt.Print("\r           \r")
-				return
-			default:
-				fmt.Printf("\rProcessing... %c", spinnerChars[idx%len(spinnerChars)])
-				idx++
-			}
-			time.Sleep(100 * time.Millisecond)
-		}
-	}()
-	return done
 }
 
 func ollamaChatAPI(model string, messages []map[string]string) (string, error) {
