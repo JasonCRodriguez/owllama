@@ -154,7 +154,7 @@ func handleChat(_ context.Context, _ *api.Client) {
 	fmt.Println("\nType /exit to quit. Type /clear to reset context.")
 
 	for {
-		fmt.Print("\033[1;36mYou>>>> \033[0m")
+		fmt.Print("\033[1;36mYou: \033[0m")
 		prompt, err := reader.ReadString('\n')
 		if err != nil {
 			if err == io.EOF {
