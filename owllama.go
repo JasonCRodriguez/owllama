@@ -188,6 +188,7 @@ func handleChat(_ context.Context, _ *api.Client) {
 				fmt.Fprintf(os.Stderr, "Could not read temp file: %v\n", err)
 				continue
 			}
+			fmt.Println("\nInput submitted.")
 			prompt = strings.TrimSpace(string(content))
 			if prompt == "" {
 				continue
